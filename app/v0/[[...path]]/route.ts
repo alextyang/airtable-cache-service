@@ -233,8 +233,8 @@ async function refreshCache(url: string, referrerHostname: string) {
     for (const key in cache[referrerHostname]) {
         if (Date.now() - timestamps[referrerHostname][key] > FORGET_INTERVAL) {
             console.log("\n[API] Forgetting cache for unused URL:", decodeURIComponent(key));
-            delete cache[key];
-            delete timestamps[key];
+            delete cache[referrerHostname][key];
+            delete timestamps[referrerHostname][key];
         }
     }
 
