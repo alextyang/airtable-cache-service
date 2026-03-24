@@ -160,6 +160,7 @@ async function loadCache(referrerHostname: string) {
         const loadedCache = JSON.parse(jsonString);
 
         cache[referrerHostname] = loadedCache;
+        timestamps[referrerHostname] = {};
 
         for (const key in loadedCache) {
             timestamps[referrerHostname][key] = Date.now();
