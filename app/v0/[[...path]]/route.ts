@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
     let data: any;
 
     if (!cache[referrer]) {
-        loadCache(referrer);
+        await loadCache(referrer);
     }
 
     if (cache[referrer]?.[url] && !(refresh === 'true')) {
@@ -147,6 +147,18 @@ async function saveCache(referrerHostname: string) {
 
     fs.writeFileSync(cacheFilePath, cacheString, 'utf8');
     console.log("[API] Cache saved to", cacheFilePath, '\n\n');
+
+    saveTimestamps(referrerHostname);
+}
+
+async function saveTimestamps(referrerHostname: string) {
+    const timestampsString = JSON.stringify(timestamps[referrerHostname]);
+    const fs = require('fs');
+    const path = require('path');
+    const timestampsFilePath = path.join(process.cwd(), 'public', 'timestamps-' + referrerHostname + '.json');
+
+    fs.writeFileSync(timestampsFilePath, timestampsString, 'utf8');
+    console.log("[API] Timestamps saved to", timestampsFilePath, '\n\n');
 }
 
 async function loadCache(referrerHostname: string) {
@@ -157,13 +169,26 @@ async function loadCache(referrerHostname: string) {
     if (fs.existsSync(cacheFilePath)) {
         const fileContent = fs.readFileSync(cacheFilePath, 'utf8') as string;
         const jsonString = fileContent.substring(PREFIX.length, fileContent.indexOf(SUFFIX)).trim();
-        const loadedCache = JSON.parse(jsonString);
+        let loadedCache: Record<string, any>;
+
+        try {
+            loadedCache = JSON.parse(jsonString);
+        } catch (error) {
+            console.error('[API] Failed to parse cache file for', referrerHostname, error);
+            cache[referrerHostname] = {};
+            timestamps[referrerHostname] = {};
+            return;
+        }
 
         cache[referrerHostname] = loadedCache;
-        timestamps[referrerHostname] = {};
+        await loadTimestamps(referrerHostname);
 
-        for (const key in loadedCache) {
-            timestamps[referrerHostname][key] = Date.now();
+        if (!timestamps[referrerHostname]) {
+            timestamps[referrerHostname] = {};
+
+            for (const key in loadedCache) {
+                timestamps[referrerHostname][key] = Date.now();
+            }
         }
 
         console.log('[API] Cache loaded from cache-' + referrerHostname + '.js');
@@ -171,6 +196,33 @@ async function loadCache(referrerHostname: string) {
         cache[referrerHostname] = {};
         timestamps[referrerHostname] = {};
         console.log("[API] No existing cache file found for", referrerHostname);
+    }
+}
+
+async function loadTimestamps(referrerHostname: string) {
+    const fs = require('fs');
+    const path = require('path');
+    const timestampsFilePath = path.join(process.cwd(), 'public', 'timestamps-' + referrerHostname + '.json');
+
+    if (fs.existsSync(timestampsFilePath)) {
+        const fileContent = fs.readFileSync(timestampsFilePath, 'utf8') as string;
+
+        let loadedTimestamps: Record<string, number>;
+
+        try {
+            loadedTimestamps = JSON.parse(fileContent);
+        } catch (error) {
+            console.error('[API] Failed to parse timestamps file for', referrerHostname, error);
+            timestamps[referrerHostname] = {};
+            return;
+        }
+
+        timestamps[referrerHostname] = loadedTimestamps;
+
+        console.log('[API] Timestamps loaded from timestamps-' + referrerHostname + '.json');
+    } else {
+        timestamps[referrerHostname] = {};
+        console.log("[API] No existing timestamps file found for", referrerHostname);
     }
 }
 
