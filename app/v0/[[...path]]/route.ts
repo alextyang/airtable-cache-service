@@ -114,14 +114,14 @@ export async function GET(request: NextRequest) {
         timestamps[referrer][url] = Date.now();
     }
 
-    await saveCache(referrer);
-
-    console.log("[API] Response: ", response.status, "\n--  Records:", data.records ? data.records.length : 'N/A', '\n\n');
-
     if (searchParams.has('offset')) {
         console.log("[API] Response includes 'offset' for pagination.");
         await mergePaginatedData(referrer);
     }
+
+    await saveCache(referrer);
+
+    console.log("[API] Response: ", response.status, "\n--  Records:", data.records ? data.records.length : 'N/A', '\n\n');
 
     return new Response(JSON.stringify(data),
         {
@@ -143,41 +143,54 @@ async function mergePaginatedData(referrerHostname: string) {
         timestamps[referrerHostname] = {};
     }
 
-    const offsetStarts = Object.keys(cache[referrerHostname]).map(url => {
-        const data = cache[referrerHostname][url];
-        const baseUrl = getBaseUrlForPagination(url);
-        return isRecord(data) && typeof data.offset === 'string' && baseUrl ? { url, baseUrl, offset: data.offset, data: data } : null;
-    }).filter(Boolean);
+    const offsetEndByBaseAndToken: Record<string, string> = {};
 
-    const offsetEnds = Object.keys(cache[referrerHostname]).map(url => {
-        const data = cache[referrerHostname][url];
+    for (const url of Object.keys(cache[referrerHostname])) {
+        if (!isOffsetUrl(url)) continue;
+
         try {
-            const queryParams = new URL(url).searchParams;
-            const baseUrl = getBaseUrlForPagination(url);
-            return queryParams.has('offset') && baseUrl ? { url, baseUrl, offset: queryParams.get('offset'), data: data } : null;
+            const parsed = new URL(url);
+            const token = parsed.searchParams.get('offset');
+            parsed.searchParams.delete('offset');
+            const baseUrl = parsed.toString();
+
+            if (token) {
+                offsetEndByBaseAndToken[`${baseUrl}::${token}`] = url;
+            }
         } catch (error) {
             console.error('[API] Skipping malformed cached URL during pagination merge:', url, error);
-            return null;
         }
-    }).filter(Boolean);
+    }
 
     let mergedAny = false;
 
-    for (const start of offsetStarts) {
-        if (!start) continue;
+    for (const startUrl of Object.keys(cache[referrerHostname])) {
+        if (isOffsetUrl(startUrl)) continue;
 
-        const end = offsetEnds.find(req => req?.offset === start.offset && req.baseUrl === start.baseUrl);
-        if (!end) continue;
+        const startData = cache[referrerHostname][startUrl];
+        const baseUrl = getBaseUrlForPagination(startUrl);
+        if (!baseUrl || !isRecord(startData)) continue;
 
-        console.log("[API] Backfilling paginated data and deleting request:", end.url, "\n\n-- Merging ", start.data.records ? start.data.records.length : 'N/A', " <-- ", end.data.records ? end.data.records.length : 'N/A', " records.");
-        if (Array.isArray(start.data.records) && Array.isArray(end.data.records)) {
-            start.data.records = start.data.records.concat(end.data.records);
-            start.data.offset = end.data.offset || undefined;
+        while (typeof startData.offset === 'string' && startData.offset.length > 0) {
+            const currentOffsetToken = startData.offset;
+            const endUrl = offsetEndByBaseAndToken[`${baseUrl}::${currentOffsetToken}`];
+            if (!endUrl) break;
 
-            delete cache[referrerHostname][end.url];
-            delete timestamps[referrerHostname][end.url];
+            const endData = cache[referrerHostname][endUrl];
+            console.log("[API] Backfilling paginated data and deleting request:", endUrl, "\n\n-- Merging ", startData.records ? startData.records.length : 'N/A', " <-- ", endData?.records ? endData.records.length : 'N/A', " records.");
 
-            cache[referrerHostname][start.url] = start.data;
+            if (!isRecord(endData) || !Array.isArray(startData.records) || !Array.isArray(endData.records)) {
+                break;
+            }
+
+            startData.records = startData.records.concat(endData.records);
+            startData.offset = typeof endData.offset === 'string' ? endData.offset : undefined;
+
+            delete cache[referrerHostname][endUrl];
+            delete timestamps[referrerHostname][endUrl];
+            delete offsetEndByBaseAndToken[`${baseUrl}::${currentOffsetToken}`];
+
+            cache[referrerHostname][startUrl] = startData;
             mergedAny = true;
         }
     }
@@ -210,11 +223,7 @@ async function saveCache(referrerHostname: string) {
         }
     }
 
-    // Keep in-memory state aligned with what is persisted.
-    cache[referrerHostname] = persistedCache;
-    timestamps[referrerHostname] = persistedTimestamps;
-
-    const cacheString = PREFIX + JSON.stringify(cache[referrerHostname]) + SUFFIX;
+    const cacheString = PREFIX + JSON.stringify(persistedCache) + SUFFIX;
 
     const fs = require('fs');
     const path = require('path');
@@ -223,11 +232,11 @@ async function saveCache(referrerHostname: string) {
     fs.writeFileSync(cacheFilePath, cacheString, 'utf8');
     console.log("[API] Cache saved to", cacheFilePath, '\n\n');
 
-    await saveTimestamps(referrerHostname);
+    await saveTimestamps(referrerHostname, persistedTimestamps);
 }
 
-async function saveTimestamps(referrerHostname: string) {
-    const timestampsString = JSON.stringify(timestamps[referrerHostname]);
+async function saveTimestamps(referrerHostname: string, timestampsToPersist?: Record<string, number>) {
+    const timestampsString = JSON.stringify(timestampsToPersist ?? timestamps[referrerHostname]);
     const fs = require('fs');
     const path = require('path');
     const timestampsFilePath = path.join(process.cwd(), 'public', 'timestamps-' + referrerHostname + '.json');
