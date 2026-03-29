@@ -16,6 +16,24 @@ function sanitizeReferrerHostname(value: string): string {
     return sanitized || 'unknown';
 }
 
+function isOffsetUrl(url: string): boolean {
+    try {
+        return new URL(url).searchParams.has('offset');
+    } catch {
+        return false;
+    }
+}
+
+function getBaseUrlForPagination(url: string): string | null {
+    try {
+        const parsed = new URL(url);
+        parsed.searchParams.delete('offset');
+        return parsed.toString();
+    } catch {
+        return null;
+    }
+}
+
 export async function GET(request: NextRequest) {
     let { searchParams, pathname } = request.nextUrl;
 
@@ -67,7 +85,7 @@ export async function GET(request: NextRequest) {
 
         if (searchParams.has('offset')) {
             console.log("[API] Response includes 'offset' for pagination.");
-            mergePaginatedData(referrer);
+            await mergePaginatedData(referrer);
         }
 
         return new Response(JSON.stringify(data), {
@@ -96,13 +114,13 @@ export async function GET(request: NextRequest) {
         timestamps[referrer][url] = Date.now();
     }
 
-    saveCache(referrer);
+    await saveCache(referrer);
 
     console.log("[API] Response: ", response.status, "\n--  Records:", data.records ? data.records.length : 'N/A', '\n\n');
 
     if (searchParams.has('offset')) {
         console.log("[API] Response includes 'offset' for pagination.");
-        mergePaginatedData(referrer);
+        await mergePaginatedData(referrer);
     }
 
     return new Response(JSON.stringify(data),
@@ -127,24 +145,28 @@ async function mergePaginatedData(referrerHostname: string) {
 
     const offsetStarts = Object.keys(cache[referrerHostname]).map(url => {
         const data = cache[referrerHostname][url];
-        return isRecord(data) && data.offset ? { url, offset: data.offset, data: data } : null;
+        const baseUrl = getBaseUrlForPagination(url);
+        return isRecord(data) && typeof data.offset === 'string' && baseUrl ? { url, baseUrl, offset: data.offset, data: data } : null;
     }).filter(Boolean);
 
     const offsetEnds = Object.keys(cache[referrerHostname]).map(url => {
         const data = cache[referrerHostname][url];
         try {
             const queryParams = new URL(url).searchParams;
-            return queryParams.has('offset') ? { url, offset: queryParams.get('offset'), data: data } : null;
+            const baseUrl = getBaseUrlForPagination(url);
+            return queryParams.has('offset') && baseUrl ? { url, baseUrl, offset: queryParams.get('offset'), data: data } : null;
         } catch (error) {
             console.error('[API] Skipping malformed cached URL during pagination merge:', url, error);
             return null;
         }
     }).filter(Boolean);
 
+    let mergedAny = false;
+
     for (const start of offsetStarts) {
         if (!start) continue;
 
-        const end = offsetEnds.find(req => req?.offset === start.offset);
+        const end = offsetEnds.find(req => req?.offset === start.offset && req.baseUrl === start.baseUrl);
         if (!end) continue;
 
         console.log("[API] Backfilling paginated data and deleting request:", end.url, "\n\n-- Merging ", start.data.records ? start.data.records.length : 'N/A', " <-- ", end.data.records ? end.data.records.length : 'N/A', " records.");
@@ -156,9 +178,12 @@ async function mergePaginatedData(referrerHostname: string) {
             delete timestamps[referrerHostname][end.url];
 
             cache[referrerHostname][start.url] = start.data;
-
-            saveCache(referrerHostname);
+            mergedAny = true;
         }
+    }
+
+    if (mergedAny) {
+        await saveCache(referrerHostname);
     }
 }
 
@@ -166,6 +191,29 @@ const PREFIX = 'export const cache = ';
 const SUFFIX = ';\nwindow.airtableCache = cache;';
 
 async function saveCache(referrerHostname: string) {
+    cache[referrerHostname] = cache[referrerHostname] || {};
+    timestamps[referrerHostname] = timestamps[referrerHostname] || {};
+
+    const persistedCache: Record<string, any> = {};
+    const persistedTimestamps: Record<string, number> = {};
+
+    for (const key in cache[referrerHostname]) {
+        if (isOffsetUrl(key)) {
+            continue;
+        }
+
+        persistedCache[key] = cache[referrerHostname][key];
+
+        const timestamp = timestamps[referrerHostname][key];
+        if (typeof timestamp === 'number' && Number.isFinite(timestamp)) {
+            persistedTimestamps[key] = timestamp;
+        }
+    }
+
+    // Keep in-memory state aligned with what is persisted.
+    cache[referrerHostname] = persistedCache;
+    timestamps[referrerHostname] = persistedTimestamps;
+
     const cacheString = PREFIX + JSON.stringify(cache[referrerHostname]) + SUFFIX;
 
     const fs = require('fs');
@@ -175,7 +223,7 @@ async function saveCache(referrerHostname: string) {
     fs.writeFileSync(cacheFilePath, cacheString, 'utf8');
     console.log("[API] Cache saved to", cacheFilePath, '\n\n');
 
-    saveTimestamps(referrerHostname);
+    await saveTimestamps(referrerHostname);
 }
 
 async function saveTimestamps(referrerHostname: string) {
@@ -331,7 +379,7 @@ async function refreshCache(url: string, referrerHostname: string) {
             nextOffset = paginatedData.offset;
         }
 
-        mergePaginatedData(referrerHostname);
+        await mergePaginatedData(referrerHostname);
     }
 
     for (const key in cache[referrerHostname]) {
@@ -342,7 +390,7 @@ async function refreshCache(url: string, referrerHostname: string) {
         }
     }
 
-    saveCache(referrerHostname);
+    await saveCache(referrerHostname);
 }
 
 // http://localhost:4444/v0/appHcZTzlfXAJpL7I/tblm2TqCcDcx94nA2?filterByFormula=OR(FIND('September 2025', ARRAYJOIN({Cohort}, ',')) > 0, {Cohort} = 'September 2025',FIND('October 2025', ARRAYJOIN({Cohort}, ',')) > 0, {Cohort} = 'October 2025',FIND('November 2025', ARRAYJOIN({Cohort}, ',')) > 0, {Cohort} = 'November 2025')
