@@ -414,7 +414,7 @@ describe.sequential("launched Airtable cache regression", () => {
       }
 
       try {
-        return Boolean(readSnapshot(snapshotPath).entries[publishedCacheKey]);
+        return Boolean(readSnapshot(snapshotPath).entries[publishedCacheKey]) && fs.existsSync(preloadPath);
       } catch {
         return false;
       }

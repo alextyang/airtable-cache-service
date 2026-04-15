@@ -56,6 +56,8 @@ describe("/preload-cache route", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("application/javascript; charset=utf-8");
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(response.headers.get("Access-Control-Expose-Headers")).toContain("Content-Length");
+    expect(response.headers.get("Cross-Origin-Resource-Policy")).toBe("cross-origin");
     await expect(response.text()).resolves.toContain("window.airtableCache = cache;");
 
     const preloadPath = path.join(
@@ -82,5 +84,45 @@ describe("/preload-cache route", () => {
 
     expect(response.status).toBe(404);
     await expect(response.text()).resolves.toBe("Not Found");
+  });
+
+  it("accepts historical cache-file tokens that include a .js suffix", async () => {
+    const workspace = createTempWorkspace();
+    workspaceRoots.push(workspace.rootDir);
+
+    process.env.AIRTABLE_API_KEY = "test-airtable-key";
+    process.env.CACHE_DATA_DIR = workspace.dataDir;
+    process.env.CACHE_PUBLIC_DIR = workspace.publicDir;
+
+    const legacySiteKey = "localhost:3000";
+
+    writeSnapshot(workspace, legacySiteKey, {
+      version: 1,
+      siteKey: legacySiteKey,
+      savedAt: 1_700_000_000_000,
+      entries: {
+        [EXAMPLE_FILTERED_LABS_URL]: {
+          body: EXAMPLE_FILTERED_LABS_BODY,
+          updatedAt: 1_700_000_000_000,
+          lastAccessedAt: 1_700_000_000_000,
+        },
+      },
+    });
+
+    const response = await GET(new NextRequest("http://localhost:4444/preload-cache/localhost:3000.js"), {
+      params: Promise.resolve({ siteToken: "localhost:3000.js" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.text()).resolves.toContain("window.airtableCache = cache;");
+
+    const preloadPath = path.join(
+      workspace.publicDir,
+      `cache-${siteKeyToFileToken(legacySiteKey)}.js`,
+    );
+    expect(fs.existsSync(preloadPath)).toBe(true);
+    expect(readPreloadCache(preloadPath)[EXAMPLE_FILTERED_LABS_URL]).toEqual(
+      EXAMPLE_FILTERED_LABS_BODY,
+    );
   });
 });

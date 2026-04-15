@@ -30,13 +30,13 @@ describe("airtable request parsing", () => {
     expect(() => normalizeSiteKey("bad site key")).toThrow(/unsupported characters/i);
   });
 
-  it("normalizes Airtable URLs by stripping offsets and sorting parameters", () => {
+  it("normalizes Airtable URLs by stripping offsets without reordering parameters", () => {
     const normalizedUrl = normalizeAirtableUrl(
       `${EXAMPLE_PUBLISHED_DATES_URL}&offset=itrIgnored&view=Grid`,
     );
 
     expect(normalizedUrl).toBe(
-      "https://api.airtable.com/v0/appHcZTzlfXAJpL7I/tblVtIK7hg8LOJfZd?fields%5B%5D=Date&fields%5B%5D=Cohort&filterByFormula=%7BPublished%7D+%3D+%27Published%27&sort%5B0%5D%5Bdirection%5D=asc&sort%5B0%5D%5Bfield%5D=Date&view=Grid",
+      "https://api.airtable.com/v0/appHcZTzlfXAJpL7I/tblVtIK7hg8LOJfZd?sort%5B0%5D%5Bfield%5D=Date&sort%5B0%5D%5Bdirection%5D=asc&fields%5B%5D=Date&fields%5B%5D=Cohort&filterByFormula=%7BPublished%7D+%3D+%27Published%27&view=Grid",
     );
     expect(normalizeAirtableUrl("not-a-url")).toBeNull();
   });
@@ -81,6 +81,18 @@ describe("airtable request parsing", () => {
       "https://api.airtable.com/v0/app123/tbl456?fields%5B%5D=Name",
     );
     expect(parsedRequest.cacheKey).toBe(parsedRequest.airtableUrl);
+  });
+
+  it("preserves the caller's Airtable parameter order for preload compatibility", () => {
+    const request = new NextRequest(
+      "http://localhost:4444/v0/app123/tbl456?sort%5B0%5D%5Bfield%5D=Date&sort%5B0%5D%5Bdirection%5D=asc&fields%5B%5D=Date&fields%5B%5D=Cohort&filterByFormula=%7BPublished%7D%3D%27Published%27&offset=abc123&ref=Influence.CenterCentre.com",
+    );
+
+    const parsedRequest = buildAirtableProxyRequest(request);
+
+    expect(parsedRequest.airtableUrl).toBe(
+      "https://api.airtable.com/v0/app123/tbl456?sort%5B0%5D%5Bfield%5D=Date&sort%5B0%5D%5Bdirection%5D=asc&fields%5B%5D=Date&fields%5B%5D=Cohort&filterByFormula=%7BPublished%7D%3D%27Published%27",
+    );
   });
 
   it("prefers the explicit ref over the Referer header and preserves encoded path segments", () => {

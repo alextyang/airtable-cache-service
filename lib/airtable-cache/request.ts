@@ -59,12 +59,17 @@ export function siteKeyToFileToken(siteKey: string): string {
 /**
  * Cache identity is based on the base Airtable query. Offset tokens are removed so
  * paginated fragments collapse into the one merged dataset the service returns.
+ *
+ * Important: we intentionally keep the remaining query parameter order exactly as
+ * the caller sent it. The public preload script writes these URLs into
+ * `window.airtableCache`, and the legacy program-sites client still does an exact
+ * string comparison when looking them up. Sorting the parameters makes the cache
+ * semantically equivalent but browser-incompatible, which breaks pre-render data.
  */
 export function normalizeAirtableUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
     parsed.searchParams.delete("offset");
-    parsed.searchParams.sort();
     return parsed.toString();
   } catch {
     return null;
@@ -187,8 +192,6 @@ export function buildAirtableProxyRequest(
   upstreamSearchParams.delete("ref");
   upstreamSearchParams.delete("refresh");
   upstreamSearchParams.delete("offset");
-  upstreamSearchParams.sort();
-
   const encodedUpstreamPath = upstreamPathSegments
     .map((segment) => encodeURIComponent(segment))
     .join("/");
