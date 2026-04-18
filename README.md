@@ -1,138 +1,95 @@
 # Airtable Cache Service
 
-This project is a persistent Airtable proxy for Center Centre sites.
+A targeted data service for static Center Centre sites that need live Airtable content without paying the latency cost on every page load.
 
-It does three jobs:
+The service has two jobs:
 
-1. Proxies Airtable `GET` requests through `/v0/...`
-2. Caches merged Airtable datasets per site key in memory and on disk
-3. Publishes a generated preload file for each site so clients can hydrate synchronously
+1. Act as a runtime cache in front of Airtable.
+2. Publish per-site preload files so browser clients can start with data already on hand.
 
-The service is designed for a long-running VM process, not a function runtime.
+That combination lets static sites keep their current hosting and deployment model while moving dynamic content closer to first render.
 
-## How It Works
+## Why It Exists
 
-Each Airtable request is scoped to a site key.
+Center Centre course sites are mostly static, but key conversion paths depend on frequently changing Airtable data such as cohort schedules and enrollment links. Direct client-side Airtable requests kept the operational model simple, but introduced a visible delay before critical page content appeared.
 
-- Preferred: pass `?ref=<site-key>`
-- Fallback: omit `ref` and send a valid `Referer` header
+This service is a localized intervention. It avoids a full SSR migration, keeps the client request format backward compatible, and improves latency in two stages:
 
-The route handler normalizes the request into one Airtable URL and one cache key.
-`offset` is never part of the cache identity. A paginated Airtable query is always fetched and stored as one merged dataset.
+1. Runtime caching reduces repeated Airtable calls.
+2. Prehydrated preload files let clients skip many network calls entirely.
 
-### Request lifecycle
-
-1. Parse the site key and Airtable path.
-2. Load the site's JSON snapshot from `data/cache/` if it is not already in memory.
-3. Return a hot cache hit immediately.
-4. If the cached entry is stale, return it immediately and refresh it in the background.
-5. On a cold miss or `refresh=true`, fetch every Airtable page, merge the records, persist the result, and return it.
-
-### Persistence model
-
-`data/cache/<site-token>.json` is the source of truth.
-
-Each snapshot stores:
-
-- `body`
-- `updatedAt`
-- `lastAccessedAt`
-
-`public/cache-<site-token>.js` is generated from that snapshot and only contains the `url -> json` preload map used by clients.
-
-Both files are written with temp-file rename semantics so partially written files are not served.
-
-### Legacy migration
-
-Older deployments wrote cache state directly to `public/cache-*.js` plus optional `timestamps-*.json`.
-
-On first load, the service will:
-
-- read supported legacy files for the requested site
-- merge paginated fragments keyed by `offset`
-- write the new JSON snapshot and generated preload file
-- remove obsolete legacy files when the new files are in place
-
-Historical filename variants are supported, including names such as `cache-localhost:3000.js`.
-
-## Cache Policy
-
-Default policy:
-
-- stale after `15 minutes`
-- evict after `72 hours`
-
-Eviction uses `lastAccessedAt`, not only `updatedAt`.
-
-Environment overrides:
-
-- `CACHE_STALE_AFTER_MS`
-- `CACHE_EVICT_AFTER_MS`
-- `AIRTABLE_FETCH_TIMEOUT_MS`
-- `CACHE_DATA_DIR`
-- `CACHE_PUBLIC_DIR`
-- `AIRTABLE_API_BASE_URL` for local/regression testing only
-
-## API
-
-### Airtable proxy
+## Request Model
 
 `GET /v0/<airtable-path>?<original-query>&ref=<site-key>&refresh=true|false`
 
-Notes:
+Behavior:
 
-- `ref` must be a slug/hostname token, not a full URL
-- base requests always return one merged dataset for paginated Airtable tables
-- `refresh=true` bypasses the cached entry and fetches fresh Airtable data
-- response headers include `X-Airtable-Cache` with `hit`, `stale`, `miss`, or `refresh`
+1. The route normalizes the Airtable request and resolves the site key from `ref` or `Referer`.
+2. Cache identity ignores Airtable pagination offsets.
+3. Airtable pages are merged into one cached dataset before persistence.
+4. The response includes `X-Airtable-Cache` with `hit`, `stale`, `miss`, or `refresh`.
 
-### Zapier proxy
+## Prehydrated Cache
 
-`POST /zapier?endpoint=<url>`
+Each site snapshot is stored as:
 
-Required environment:
+1. `data/cache/<site-token>.json` as the canonical on-disk record
+2. `public/cache-<site-token>.js` as the browser-facing preload artifact
 
-- `ZAPIER_SHARED_SECRET`
-- `ZAPIER_ALLOWED_HOSTS` as a comma-separated allowlist
+The preload file is derived from the JSON snapshot rather than maintained separately. When a client imports it, the browser gets the same request-response inventory that the runtime cache is already maintaining for that site.
 
-Required request auth:
+## Fallback Chain
 
-- `x-zapier-secret: <secret>`
-- or `Authorization: Bearer <secret>`
+The service is designed as an enhancement, not a hard dependency.
 
-The endpoint host must be allowlisted. Arbitrary forwarding is intentionally blocked.
+1. Clients prefer the preloaded browser cache.
+2. If the preload misses, clients can call this service.
+3. If this service is unavailable, clients can still fall back to Airtable directly.
 
-## Environment
+That keeps the integration low-risk for existing sites.
+
+## Architecture
+
+1. `app/v0/[[...path]]/route.ts` and `app/zapier/route.ts` are thin route adapters.
+2. `lib/airtable-cache/` contains request normalization, caching, persistence, and Airtable-specific behavior.
+3. `lib/zapier/service.ts` contains the protected Zapier forwarding flow.
+4. `scripts/prepare-preloads.mjs` and `scripts/run-next-with-preloads.mjs` rebuild preload artifacts before local startup.
+5. `tests/` covers route behavior, cache behavior, persistence, and regressions.
+
+The live endpoints use the App Router. The tiny `pages/` files exist only because Next.js still expects `_document` and `404` during production builds.
+
+## Configuration
 
 Required:
 
-- `AIRTABLE_API_KEY`
+1. `AIRTABLE_API_KEY`
 
 Optional:
 
-- `CACHE_DATA_DIR`
-- `CACHE_PUBLIC_DIR`
-- `CACHE_STALE_AFTER_MS`
-- `CACHE_EVICT_AFTER_MS`
-- `AIRTABLE_FETCH_TIMEOUT_MS`
-- `ZAPIER_SHARED_SECRET`
-- `ZAPIER_ALLOWED_HOSTS`
+1. `CACHE_STALE_AFTER_MS`
+2. `CACHE_EVICT_AFTER_MS`
+3. `AIRTABLE_FETCH_TIMEOUT_MS`
+4. `CACHE_DATA_DIR`
+5. `CACHE_PUBLIC_DIR`
+6. `AIRTABLE_API_BASE_URL`
+7. `ZAPIER_SHARED_SECRET`
+8. `ZAPIER_ALLOWED_HOSTS`
 
-## Development
+Default policy:
 
-Install dependencies:
+1. Stale after 15 minutes
+2. Evict after 72 hours
+
+Eviction is based on `lastAccessedAt`, not only `updatedAt`.
+
+## Local Development
 
 ```bash
 npm install
-```
-
-Run the service:
-
-```bash
 npm run dev
 ```
 
-Run the full validation gate:
+Validation:
 
 ```bash
 npm run check
@@ -147,21 +104,9 @@ npm run test
 npm run build
 ```
 
-## File Layout
-
-Important paths:
-
-- `app/v0/[[...path]]/route.ts`: thin Airtable proxy route
-- `app/zapier/route.ts`: thin Zapier route
-- `lib/airtable-cache/`: request parsing, Airtable client, persistence, cache store, logging, config
-- `lib/zapier/service.ts`: hardened Zapier forwarding
-- `tests/`: request, persistence, route, and cache behavior coverage
-
-The route handlers should stay small. If you need to change cache behavior, change the service modules first and keep the routes as adapters.
-
 ## Operational Notes
 
-- Generated files under `data/cache/` and `public/cache-*.js` are runtime artifacts and should not be committed.
-- If a snapshot becomes corrupted, delete the affected `data/cache/<site-token>.json` and the next request will rebuild it from Airtable.
-- If an old deployment still has `public/cache-*.js` files only, the first request for that site will migrate them.
-- The service assumes one Node process per VM. It does not coordinate cache state across multiple workers or multiple machines.
+1. Generated files under `data/cache/` and `public/cache-*.js` should not be committed.
+2. Deleting a corrupted snapshot forces the next request to rebuild it from Airtable.
+3. Legacy preload artifacts are migrated into the JSON snapshot format on first access.
+4. The cache is process-local and assumes one Node process per VM.

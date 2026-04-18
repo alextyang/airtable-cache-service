@@ -3,26 +3,9 @@ import { NextRequest } from "next/server";
 import { HttpError } from "@/lib/airtable-cache/errors";
 import { ProxyRequest } from "@/lib/airtable-cache/types";
 
-// This file takes one incoming Next.js request and turns it into the exact
-// shape the cache service needs.
-// It validates the site name, removes cache-only query parameters, and builds
-// the normalized Airtable URL that the rest of the service uses as cache key.
-// Nothing here talks to Airtable or touches disk; it only prepares request data.
-// Keeping this work in one place makes the route handler very small and easy to
-// follow for someone new to the codebase.
-// The rules in this file are strict on purpose because the request shape is
-// part of the service contract.
-// If a request cannot be understood safely, it fails fast with a clear error.
-// That keeps bad input from leaking into filenames or cache keys later on.
 const SITE_REF_PATTERN = /^(?=.{1,255}$)[a-z0-9._-]+(?::\d{1,5})?$/i;
-
-// This is the normal Airtable API host used when the environment does not ask
-// for a different upstream base URL.
 const DEFAULT_AIRTABLE_API_BASE_URL = "https://api.airtable.com";
 
-// A site key is the short name we use to identify which site owns the cache.
-// This helper trims the input, makes it lowercase, and checks that it looks
-// like a simple hostname-style token instead of a full URL or random text.
 export function normalizeSiteKey(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (!normalized) {
@@ -50,8 +33,6 @@ export function normalizeSiteKey(value: string): string {
   return normalized;
 }
 
-// Some cache files need a filename-safe token, so this turns the validated site
-// key into a version that can be used in paths without surprises.
 export function siteKeyToFileToken(siteKey: string): string {
   return normalizeSiteKey(siteKey).replace(/[^a-z0-9._-]/g, "_");
 }
@@ -76,9 +57,6 @@ export function normalizeAirtableUrl(url: string): string | null {
   }
 }
 
-// The service can talk to a different Airtable-like host in tests or local
-// development, so this helper reads the environment setting and validates it.
-// If nothing is set, it falls back to the normal Airtable API host.
 export function resolveAirtableApiBaseUrl(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
@@ -115,10 +93,6 @@ export function resolveAirtableApiBaseUrl(
   return parsedUrl.toString().replace(/\/$/, "");
 }
 
-// The service can learn which site is making a request in two ways:
-// a direct `ref` query parameter or a browser Referer header.
-// This helper picks the first safe source it can find and rejects anything
-// that is missing or malformed.
 function resolveRequestSiteKey(request: NextRequest): string {
   const refParam = request.nextUrl.searchParams.get("ref");
   if (refParam) {
@@ -156,10 +130,6 @@ function resolveRequestSiteKey(request: NextRequest): string {
   return normalizeSiteKey(refererUrl.host);
 }
 
-// This builds the normalized proxy request that the cache service actually uses.
-// It removes route-only parameters, fixes up the Airtable path, and stores both
-// the upstream URL and the cache key as the same normalized value.
-// The service later uses this object to decide whether it can serve from cache.
 export function buildAirtableProxyRequest(
   request: NextRequest,
   airtableApiBaseUrl = resolveAirtableApiBaseUrl(),
@@ -174,8 +144,6 @@ export function buildAirtableProxyRequest(
     );
   }
 
-  // Some legacy callers hit this proxy as `/v0/v0/...`. Collapse the duplicated segment so
-  // both the original and corrected forms map to the same Airtable request.
   const upstreamPathSegments =
     requestedPathSegments[0]?.toLowerCase() === "v0"
       ? requestedPathSegments.slice(1)

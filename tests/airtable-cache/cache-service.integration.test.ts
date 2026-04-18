@@ -23,7 +23,7 @@ import {
   writeSnapshot,
 } from "@/tests/test-utils";
 
-describe("airtable cache service integration", () => {
+describe("airtable cache service", () => {
   const workspaces: string[] = [];
 
   afterEach(() => {

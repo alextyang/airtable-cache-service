@@ -1,23 +1,12 @@
-// This file turns environment variables into the one configuration object the cache service uses.
-// The goal is to keep the rest of the service from reading `process.env` directly so the behavior
-// stays centralized, testable, and easier for a new teammate to understand.
 import path from "node:path";
 
 import { HttpError } from "@/lib/airtable-cache/errors";
 import { AirtableConfig } from "@/lib/airtable-cache/types";
 
-// This is the default age, in milliseconds, after which a cache entry is considered stale.
-// Stale entries can still be served, but the service will try to refresh them in the background.
 export const DEFAULT_STALE_AFTER_MS = 15 * 60 * 1000;
-// This is the default lifetime, in milliseconds, after which a cache entry should be removed.
-// Once an entry is this old, the service treats it as expired instead of trying to reuse it.
 export const DEFAULT_EVICT_AFTER_MS = 72 * 60 * 60 * 1000;
-// This is the default timeout, in milliseconds, for outbound Airtable fetches.
-// It prevents a slow upstream request from tying up the service forever.
 export const DEFAULT_FETCH_TIMEOUT_MS = 15 * 1000;
 
-// Read a duration from an environment variable and make sure it is a real positive number.
-// If the variable is missing, the caller's fallback value is used instead.
 function parseDurationMs(
   rawValue: string | undefined,
   envKey: string,
@@ -40,9 +29,6 @@ function parseDurationMs(
   return parsedValue;
 }
 
-// Convert a path from configuration into an absolute directory path.
-// If the environment variable is missing, the code falls back to a known directory relative to the
-// current working directory so the service has a stable default on disk.
 function resolveDirectory(
   cwd: string,
   rawValue: string | undefined,
@@ -55,9 +41,6 @@ function resolveDirectory(
   return path.resolve(cwd, rawValue);
 }
 
-// Build the complete Airtable cache configuration from environment variables.
-// This is the only place that enforces required settings and default values, which keeps the rest of
-// the code from repeating the same checks in multiple places.
 export function createAirtableConfig(
   env: NodeJS.ProcessEnv = process.env,
   cwd = process.cwd(),

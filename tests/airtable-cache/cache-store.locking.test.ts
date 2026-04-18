@@ -18,7 +18,7 @@ import {
   createTestConfig,
 } from "@/tests/test-utils";
 
-describe("airtable cache store internals", () => {
+describe("airtable cache store locking and edge cases", () => {
   const workspaces: ReturnType<typeof createTempWorkspace>[] = [];
 
   afterEach(() => {

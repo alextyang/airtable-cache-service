@@ -1,7 +1,3 @@
-// This route is the manual maintenance entry point for browser preload files.
-// Normal page loads should hit the generated static file in `public/cache-<site>.js`.
-// This route exists as an explicit repair endpoint that can rebuild that file from the private JSON
-// snapshot when an operator or proxy wants to recover it on demand.
 import { promises as fileSystem } from "fs";
 import path from "node:path";
 
@@ -45,8 +41,6 @@ function normalizeRequestedSiteToken(rawSiteToken: string): string {
     throw new HttpError(400, "INVALID_REF", "The preload site token cannot be empty.");
   }
 
-  // Older callers may still send the filename-style token with a `.js` suffix, while the new
-  // persistence layer stores snapshots under the canonical filename-safe token only.
   const tokenWithoutJavaScriptSuffix = trimmedSiteToken.endsWith(".js")
     ? trimmedSiteToken.slice(0, -3)
     : trimmedSiteToken;

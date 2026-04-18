@@ -10,16 +10,8 @@ import {
   stripOffsetField,
 } from "@/lib/airtable-cache/types";
 
-// This file knows how to talk to Airtable itself.
-// It fetches one page at a time, joins all pages into one merged JSON object,
-// and raises typed errors when Airtable responds with something unsafe or broken.
-
-// We cap the number of pages we will follow so a bad cursor from Airtable cannot
-// keep this process busy forever.
 const MAX_AIRTABLE_PAGES = 100;
 
-// Fetch can stop in more than one way, and different runtimes label that stop
-// differently. This helper treats the timeout-shaped cases as the same thing.
 function isTimeoutError(error: unknown): boolean {
   return (
     error instanceof DOMException &&
@@ -27,8 +19,6 @@ function isTimeoutError(error: unknown): boolean {
   );
 }
 
-// Airtable can return empty bodies, JSON bodies, or plain text error bodies.
-// This helper reads the raw text first and then decides how much structure there is.
 async function parseResponseBody(response: Response): Promise<unknown> {
   const rawBody = await response.text();
   if (!rawBody.trim()) {
@@ -42,11 +32,7 @@ async function parseResponseBody(response: Response): Promise<unknown> {
   }
 }
 
-// Airtable pagination returns one page at a time, but the cache layer wants one
-// complete dataset. This helper joins all page payloads into one JSON object.
 function mergePaginatedResponses(pages: JsonObject[]): JsonObject {
-  // Every public cache entry represents the full Airtable dataset for a base query, so all
-  // Airtable pages are merged into one response before the result reaches the cache layer.
   const firstPage = stripOffsetField(pages[0]);
   if (pages.length === 1) {
     return firstPage;
@@ -79,19 +65,13 @@ function mergePaginatedResponses(pages: JsonObject[]): JsonObject {
   };
 }
 
-// This class is a small adapter around Airtable's HTTP API.
-// It does not keep cache state itself; it only fetches, validates, and merges pages.
 export class AirtableClient implements AirtableClientContract {
-  // The constructor only stores the config, logger, and fetch implementation
-  // so the rest of the class can use the same settings for every request.
   constructor(
     private readonly config: AirtableConfig,
     private readonly logger: Logger,
     private readonly fetchImpl: FetchLike = fetch,
   ) {}
 
-  // Fetch the Airtable query, follow every pagination cursor, and return one
-  // merged response body that represents the whole dataset.
   async fetchMergedResponse(
     airtableUrl: string,
   ): Promise<{ status: number; body: JsonObject; pageCount: number }> {
@@ -110,11 +90,9 @@ export class AirtableClient implements AirtableClientContract {
             maxPages: MAX_AIRTABLE_PAGES,
             pageCount: pageBodies.length,
           },
-      );
+        );
       }
 
-      // Each loop builds the next URL from the original Airtable URL and, if
-      // needed, adds the cursor that Airtable gave us on the previous page.
       const airtablePageUrl = new URL(airtableUrl);
       if (nextOffsetToken) {
         airtablePageUrl.searchParams.set("offset", nextOffsetToken);
@@ -127,9 +105,8 @@ export class AirtableClient implements AirtableClientContract {
         typeof pageBody.offset === "string" && pageBody.offset.length > 0
           ? pageBody.offset
           : undefined;
+
       if (nextOffsetTokenFromPage) {
-        // Airtable should advance the cursor on every page. Repeating an offset would loop
-        // forever, so fail fast and keep the last good cache snapshot intact.
         if (seenOffsetTokens.has(nextOffsetTokenFromPage)) {
           throw new HttpError(
             502,
@@ -163,8 +140,6 @@ export class AirtableClient implements AirtableClientContract {
     };
   }
 
-  // Fetch one Airtable page, send the auth header, enforce the timeout, and
-  // turn the response into a plain JSON object that the rest of the service can trust.
   private async fetchPage(airtableUrl: string): Promise<JsonObject> {
     let response: Response;
 
